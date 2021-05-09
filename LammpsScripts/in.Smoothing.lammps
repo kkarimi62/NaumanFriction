@@ -1,0 +1,141 @@
+#This script is to Smooth the substrate if required
+dimension	2 #Two-diemensional setup
+variable   	name string Smoothing #To create files named based on this string.
+
+atom_style	sphere
+units		lj
+
+###############################################
+# Geometry-related parameters - box dimensions
+###############################################
+
+variable    DT equal 5e-5 #0.000005 Time-step
+variable	boxx equal 1.5 #Box lenght (x-axis)
+variable	boxy equal 0.3*${boxx} #Box hight (y-axis) - after the final setup
+variable    boxz1 equal -0.5 #Box depth negative-(z-axis) - fixed
+variable    boxz2 equal 0.5 #Box depth positive-(z-axis) - fixed
+
+variable	rlo equal 0.002 #Radius of type-1 substrate particels
+variable	rhi equal 0.0025 #Radius of type-2 substrate particels
+
+variable    skin equal 0.3*${rhi} #Skin to consider interactions between particles
+
+###############################################
+# Create Box and reading data
+###############################################
+
+region boxreg block 0 ${boxx} 0 ${boxy} ${boxz1} ${boxz2}
+
+read_data data.SliderSubstrate #Reading Slider and Substrate data
+read_data data.SpringAtom.txt add append #Reading Pulling atom from the MATLAB file
+
+change_box	all boundary p f p #periodic motion only in x and z-direction, z-axis is fixed anyway so doesn't matter
+
+comm_modify 	vel yes #vel value = yes: do communicate velocity info with ghost atoms
+
+###############################################
+# Grouping particles together
+###############################################
+
+variable    grav equal 10.0 #fixing gravity in negative y-axis
+fix 		1 all nve/sphere #fix -integartion for one kind of particle vol and energy
+
+group       substrate_atoms1 type 1 #Type 1 substrate particles
+group       substrate_atoms2 type 2 #Type 2 substrate particles
+group       slider_atoms type 3 4 #Slider particles group
+group       spring_atoms type 5 #Spring pulling particle
+group       springslider_atoms type 4 #Slider pulling particle
+
+group       forGrav union substrate_atoms1 substrate_atoms2 slider_atoms #Gravity acting on particles
+fix	        grav forGrav gravity ${grav} vector 0 -1 0 #Fixing gravity
+
+comm_modify	vel yes
+
+neighbor    	${skin} bin
+neigh_modify	delay 0 every 1 check yes
+
+###############################################
+# Define interactions - Particles and slider
+###############################################
+
+neighbor	    ${skin} bin #Creating a pairwise list
+neigh_modify	delay 0 every 1 check yes #only build the list over again if some atom has moved half the skin distance or more, check every timestep
+
+# - Normal force parameters - hertz model
+variable    k_n_particles equal 1e6 #spring stiffness for substrate particels
+variable    k_n_slider equal 1e6 #spring stiffness for slider particels
+variable    eta_n_particles equal 5e5 #damping prefactor
+
+# - Tangential force paramteres - tangential linear_history model
+variable    k_t_particles equal 1e1 #tagential spring stiffness
+variable    k_t_slider equal 1e0 #tagential spring stiffness
+variable    x_gamma_t_particles equal 1e1 # dimensionless multiplier for the normal damping that determines the magnitude of the tangential damping - substrate
+variable    x_gamma_t_slider equal 1e4 # dimensionless multiplier for the normal damping that determines the magnitude of the tangential damping - slider/substrate
+variable    mu_s_particles equal 1e1 #Tangential friction coefficient - Substrate paricles
+variable    mu_s_slider equal 1e0 #Tangential friction coefficient - Slider/Substrate
+
+# - Rolling friction (which resists pure rolling motion of particles) - spring-dashpot-slider model
+variable    k_roll_particles equal 1e1 #rolling stiffness
+variable    gamma_roll_particles equal 1e4 #dimensionless multiplier for the normal damping that determines the magnitude of the "rolling" damping
+variable    mu_roll_particles equal 1e1 #rolling friction coefficient
+
+# - Twisting friction which resists rotation of two contacting particles about the vector that connects their centers.
+# - Marshall model
+
+pair_style	granular
+pair_coeff 	1 1 hertz ${k_n_particles} ${eta_n_particles} tangential linear_history ${k_t_particles} ${x_gamma_t_particles} ${mu_s_particles} rolling sds ${k_roll_particles} ${gamma_roll_particles} ${mu_roll_particles} twisting marshall
+pair_coeff 	1 2 hertz ${k_n_particles} ${eta_n_particles} tangential linear_history ${k_t_particles} ${x_gamma_t_particles} ${mu_s_particles} rolling sds ${k_roll_particles} ${gamma_roll_particles} ${mu_roll_particles} twisting marshall
+pair_coeff 	2 2 hertz ${k_n_particles} ${eta_n_particles} tangential linear_history ${k_t_particles} ${x_gamma_t_particles} ${mu_s_particles} rolling sds ${k_roll_particles} ${gamma_roll_particles} ${mu_roll_particles} twisting marshall
+pair_coeff 	1 3 hertz ${k_n_slider} ${eta_n_particles} tangential linear_history ${k_t_slider} ${x_gamma_t_slider} ${mu_s_slider}
+pair_coeff 	2 3 hertz ${k_n_slider} ${eta_n_particles} tangential linear_history ${k_t_slider} ${x_gamma_t_slider} ${mu_s_slider}
+# Non interacting types
+pair_coeff 	3 3 hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	1 4 hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	2 4 hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	3 4 hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	1 5 hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	2 5 hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	3 5 hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	4 * hertz 0 0 tangential linear_history 0 0 0 # No interactions
+pair_coeff 	5 * hertz 0 0 tangential linear_history 0 0 0 # No interactions
+
+#######################################################
+# Define interactions - Substrate Particles and walls
+#######################################################
+
+
+# - Normal force parameters - hertz/material model
+variable    E_wall equal 1e7 #Young’s modulus in units of force/length^2, i.e. pressure
+variable    eta_n_wall equal 1e5 #damping prefactor for wall
+variable    nu_wall equal 0.3 #Poisson’s ratio
+
+# - Tangential force paramteres - tangential mindlin i.e, no-slip solution
+#variable    k_t_wall equal NULL #Specified to NULL here, in which case mixing of the shear modulus for different particle (ij) is calculated.
+variable    x_gamma_t_wall equal 1.0 #dimensionless multiplier for the normal damping that determines the magnitude of the tangential damping
+variable    mu_s_wall equal 0.5 #tangential (or sliding) friction coefficient
+
+fix             2 all wall/gran granular hertz/material ${E_wall} ${eta_n_wall} ${nu_wall} tangential mindlin NULL ${x_gamma_t_wall} ${mu_s_wall} yplane 0 NULL
+
+fix             3 slider_atoms rigid single #Fixing Slider particels together as one rigid body
+
+thermo_style	custom step cpu atoms ke pe vol density
+thermo_modify	lost warn
+thermo		    1000
+
+timestep	    ${DT}
+#dump		    1 all custom 100 ${name}.dump id type radius mass x y z
+
+###############################################
+# Smoothing
+###############################################
+
+variable    spring_length equal 0.25 #Intial length of the spring
+variable    v equal 0.0 #Pulling speed
+variable    spring equal 70 #Spring constant
+
+fix 4       springslider_atoms spring couple spring_atoms ${spring} ${spring_length} 0 0 0
+fix 5       spring_atoms move linear ${v} 0.0 0.0 units box
+
+run         100000
+
+write_data data.${name}

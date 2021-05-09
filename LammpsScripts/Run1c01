@@ -1,0 +1,31 @@
+#!/bin/bash
+
+#To combine the LAMMPS and MATLAB scrpits for the simulations
+#The seeds are not changing in the LAMMPS by themselves so have to be revised in each simulation.
+#Having different folders with different LAMMPS files would do the trick.
+
+#Starting the scrpit file
+echo Starting with creating seeds for dumping Particles in LAMMPS!
+
+#Creating the slider - MATLAB
+#matlab -nodisplay -nosplash -nodesktop -r "run('Seeds.m'); exit;"
+
+#Dropping the particles and cutting them - LAMMPS
+mpirun --use-hwthread-cpus -np 3 ~/Documents/lammps-3Mar20/build/lmp -in in.Pouring.Cutting.lammps
+
+#Creating the slider - MATLAB
+#matlab -nodisplay -nosplash -nodesktop -r "run('Slider.m'); exit;"
+
+#Droping the slider and leaving it there to settle sometime - LAMMPS
+mpirun --use-hwthread-cpus -np 3 ~/Documents/lammps-3Mar20/build/lmp -in in.SliderDrop.lammps
+
+#Setting up the particle for the slider - MATLAB
+matlab -nodisplay -nosplash -nodesktop -r "run('SpringAtom.m'); exit;"
+
+#Setting up the spring - LAMMPS (we can smooth the substrate here if we like)
+mpirun --use-hwthread-cpus -np 3 ~/Documents/lammps-3Mar20/build/lmp -in in.Smoothing.lammps
+
+#Final, running the slider over the substrate
+mpirun --use-hwthread-cpus -np 3 ~/Documents/lammps-3Mar20/build/lmp -in in.Simc0.1.Run1.lammps
+
+echo All Done!
