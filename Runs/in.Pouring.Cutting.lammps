@@ -1,0 +1,146 @@
+# pour two types of particles (cohesive and non-cohesive) on flat wall
+
+dimension	2
+variable   	name string SubstrateParticles
+
+variable    seed1 file seed1.txt
+variable    seed2 file seed2.txt
+
+atom_style	sphere
+units		lj
+
+#--- microscopic interaction
+variable KN equal 1.0e+6 #--- normal spring constant
+variable KN_WALL equal 10*${KN}
+variable KT_WALL equal 0.5*${KN_WALL} #--- tangential spring constant
+variable MU equal 1.0
+variable GAMMA_N equal 0.3 #--- normal damper: ~ (k_n*m)**0.5
+variable GAMMA_N_WALL equal 1.0
+variable X_GAMMA_T equal 0.5 #--- tangential damper = X_GAMMA_T * GAMMA_N
+
+###############################################
+# Geometry-related parameters
+###############################################
+
+variable    DT equal 1.0e-05 #kam 0.00005
+variable	boxx equal 1.5
+variable	boxy equal 2*${boxx}
+variable	boxyl equal 0.3*${boxx}
+
+variable    cut equal 0.095
+
+###############################################
+# Insertion block paramters
+###############################################
+variable xlo equal 0*${boxx}
+variable ylo equal 0.05*${boxy}
+
+variable xhi equal ${boxx}
+variable yhi equal 0.1*${boxy}
+
+###############################################
+# Particle-related parameters
+###############################################
+variable	rlo equal 0.002
+variable	rhi equal 0.0025
+
+variable	dlo equal 2.0*${rlo}
+variable	dhi equal 2.0*${rhi}
+
+variable	dens equal 25000.0
+
+variable    skin equal 0.3*${rhi}
+
+###############################################
+# Create Box
+###############################################
+
+region boxreg block 0 ${boxx} 0 ${boxy} -0.5 0.5 #boxreg is defined here
+create_box	5 boxreg #Five type of particels
+change_box	all boundary p f p #periodic motion only in x and z-direction, z-axis is fixed anyway so doesn't matter
+
+comm_modify 	vel yes
+
+region		insreg1 block ${xlo} ${xhi} ${ylo} ${yhi} -0.5 0.5 #region 1 defined
+
+###############################################
+# Pouring in particles
+###############################################
+
+fix		1 all nve/sphere #fix -integartion for one kind of particle vol and energy
+fix		grav all gravity 10.0 vector 0 -1 0  #fixing gravity in negative z-axis
+fix		ins1 all pour 5670 1 ${seed1} region insreg1 diam one ${dlo} dens ${dens} ${dens} #fix the number of particles - smaller ones
+fix		ins2 all pour 2100 2 ${seed2} region insreg1 diam one ${dhi} dens ${dens} ${dens} #fix the number of particles - bigger ones
+
+comm_modify	vel yes
+
+neighbor	${skin} bin
+neigh_modify	delay 0 every 1 check yes
+
+#--- added by kk
+#fix 77 all viscous 10.0 #--- damping ratio
+
+pair_style	granular
+pair_coeff 	1 1 hertz ${KN} ${GAMMA_N} tangential linear_nohistory ${X_GAMMA_T} 0.0 damping velocity #--- zero friction between grains 
+pair_coeff 	1 2 hertz ${KN} ${GAMMA_N} tangential linear_nohistory ${X_GAMMA_T} 0.0 damping velocity
+pair_coeff 	2 2 hertz ${KN} ${GAMMA_N} tangential linear_nohistory ${X_GAMMA_T} 0.0 damping velocity
+pair_coeff 	1 3 hertz ${KN_WALL} ${GAMMA_N_WALL} tangential linear_nohistory ${X_GAMMA_T} 0.0 damping velocity  #--- interaction between grains and the slider
+pair_coeff 	2 3 hertz ${KN_WALL} ${GAMMA_N_WALL} tangential linear_nohistory ${X_GAMMA_T} 0.0 damping velocity
+#
+pair_coeff 	1 4 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	2 4 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	3 3 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	3 4 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	4 4 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	1 5 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	2 5 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	3 5 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	4 5 hertz 0 0 tangential linear_nohistory 0 0 
+pair_coeff 	5 5 hertz 0 0 tangential linear_nohistory 0 0 
+
+#--- added by kk
+fix   3 all wall/gran granular hertz ${KN_WALL} ${GAMMA_N_WALL} tangential linear_history ${KT_WALL} ${X_GAMMA_T} ${MU} damping velocity yplane 0 NULL
+#fix     3 all wall/gran granular hertz/material 1e7 1e5 0.3 tangential mindlin NULL 1.0 0.5 yplane 0 NULL
+
+thermo_style	custom step cpu atoms ke pe vol density
+thermo_modify	lost warn
+thermo		100
+
+timestep	${DT}
+
+dump    1 all custom 1000 substrate.dump id type radius mass x y z
+
+#kamrun		3000 #50000
+run		50000
+
+###############################################
+# Adding top lid
+###############################################
+
+region  top_wall plane ${boxx} ${boxy} 0 0 -1 0 side in
+#--- added by kk
+#fix		5 all wall/gran/region granular hertz/material 1e7 1e5 0.3 tangential mindlin NULL 1.0 0.5 region top_wall
+fix		5 all wall/gran/region granular hertz ${KN_WALL} ${GAMMA_N_WALL} tangential linear_history ${KT_WALL} ${X_GAMMA_T} ${MU} damping velocity region top_wall
+
+run 50000
+
+change_box all y final 0 ${boxyl}
+
+run 10000
+
+###############################################
+# Delete atoms
+###############################################
+
+compute		1 all property/atom radius
+variable	ymax atom y+c_1>${cut} #Particles cutting point
+group		delgroup dynamic all var ymax every 1
+
+run 1
+
+delete_atoms	group delgroup
+run 1000
+
+run 100000
+
+write_data data.substrate
